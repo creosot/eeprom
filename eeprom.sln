@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30204.135
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{803FD0C6-D64E-4E16-9DC3-1DAEC859A3D2}") = "eeprom", "eeprom.vgdbproj", "{99881C26-895E-4C05-B893-1AA9146BEB5C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Arduino_Mega_or_Mega_2560 = Debug|Arduino_Mega_or_Mega_2560
+		Release|Arduino_Mega_or_Mega_2560 = Release|Arduino_Mega_or_Mega_2560
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{99881C26-895E-4C05-B893-1AA9146BEB5C}.Debug|Arduino_Mega_or_Mega_2560.ActiveCfg = Debug|Arduino_Mega_or_Mega_2560
+		{99881C26-895E-4C05-B893-1AA9146BEB5C}.Debug|Arduino_Mega_or_Mega_2560.Build.0 = Debug|Arduino_Mega_or_Mega_2560
+		{99881C26-895E-4C05-B893-1AA9146BEB5C}.Release|Arduino_Mega_or_Mega_2560.ActiveCfg = Release|Arduino_Mega_or_Mega_2560
+		{99881C26-895E-4C05-B893-1AA9146BEB5C}.Release|Arduino_Mega_or_Mega_2560.Build.0 = Release|Arduino_Mega_or_Mega_2560
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {17602335-3E50-470D-B504-9D7FEC07B6B5}
+	EndGlobalSection
+EndGlobal
