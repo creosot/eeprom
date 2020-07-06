@@ -12,6 +12,7 @@ uint8_t eeread(int addr);
 uint8_t setLightParamFromEEPROMtoCURRENT(uint8_t row);
 void validateLightParamFromEEPROM();
 void printBuffer(char* buf, uint8_t length);
+void printBufferToETH(char* buf, uint8_t length);
 void printBufferEEPROM(const char *buf, uint8_t length);
 void printBufferPGM(int adr_ptr);
 void printBufferPGMtoETH(int adr_ptr);
@@ -30,13 +31,20 @@ void default_print();
 void printLux();
 void lightStream();
 void PrintLightParam();
+uint8_t validateGIDsFromEEPROM();
+void setGIDsToDEFAULT();
+void setGIDsFromEEPROM();
+void checkGIDs();
 
 
 
 #define LENGTH_LIGHT_PARAM_ROW	6
 #define COUNT_LIGHT_PARAM_ROW	4
+#define COUNT_GIDS_ROW	2
+#define LENGTH_GIDS_ROW	20
 EEMEM const char light_param_EEPROM[COUNT_LIGHT_PARAM_ROW][LENGTH_LIGHT_PARAM_ROW] = { 0 };
-EEMEM const char dsa[LENGTH_LIGHT_PARAM_ROW] = { 0 };
+EEMEM const char gids_EEPROM[COUNT_GIDS_ROW][LENGTH_GIDS_ROW] = { 0 };
+char gids_CURRENT[COUNT_GIDS_ROW][LENGTH_GIDS_ROW] = { 0 };
 const char light_param_DEFAULT[COUNT_LIGHT_PARAM_ROW][LENGTH_LIGHT_PARAM_ROW] = { "20", "25000", "20", "80" };
 char light_param_TEMP[COUNT_LIGHT_PARAM_ROW][LENGTH_LIGHT_PARAM_ROW] = { 0 };
 long light_param_CURRENT_D[COUNT_LIGHT_PARAM_ROW] = { 0 };
@@ -50,6 +58,13 @@ const char * const string_table[COUNT_LIGHT_PARAM_ROW] PROGMEM =   	   // change
 	string_1,
 	string_2,
 	string_3
+};
+const char gida[] PROGMEM = "GIDA: ";
+const char gidb[] PROGMEM = "GIDB: ";
+const char * const gids_table[COUNT_GIDS_ROW] PROGMEM =
+{   
+	gida,
+	gidb
 };
 float lux = -2;
 uint8_t mac[6] = { 0x74, 0x69, 0x69, 0x2D, 0x30, 0x31 };
@@ -110,19 +125,28 @@ void setup()
 	
 	
 	
-//	saveString((int)light_param_EEPROM[1], (char *)"44");
+	//	saveString((int)light_param_EEPROM[1], (char *)"4ff");
+	//	Serial.println();
+	//	printBufferEEPROM(light_param_EEPROM[0], sizeof(light_param_EEPROM[0]));
+	//	Serial.println();
+	//	printBufferEEPROM(light_param_EEPROM[1], sizeof(light_param_EEPROM[1]));
+	//	Serial.println();
+	//	printBufferEEPROM(light_param_EEPROM[2], sizeof(light_param_EEPROM[2]));
+	//	Serial.println();
+	//	printBufferEEPROM(light_param_EEPROM[3], sizeof(light_param_EEPROM[3]));
+	//	Serial.println();
+	//	printBufferEEPROM(gids_EEPROM[0], LENGTH_GIDS_ROW);
+	//	Serial.println();
+	//	printBufferEEPROM(gids_EEPROM[1], LENGTH_GIDS_ROW);
+	//	Serial.println();
+	//	validateLightParamFromEEPROM();
+	////	readLightSettingFromInput();
+	//	printlight_param_TEMP_CURRENT_D_EEPROM();
+	
+	checkGIDs();
+	printBuffer(gids_CURRENT[0], LENGTH_GIDS_ROW);
 	Serial.println();
-	printBufferEEPROM(light_param_EEPROM[0], sizeof(light_param_EEPROM[0]));
-	Serial.println();
-	printBufferEEPROM(light_param_EEPROM[1], sizeof(light_param_EEPROM[1]));
-	Serial.println();
-	printBufferEEPROM(light_param_EEPROM[2], sizeof(light_param_EEPROM[2]));
-	Serial.println();
-	printBufferEEPROM(light_param_EEPROM[3], sizeof(light_param_EEPROM[3]));
-	Serial.println();
-	validateLightParamFromEEPROM();
-//	readLightSettingFromInput();
-//	printlight_param_TEMP_CURRENT_D_EEPROM();
+	printBuffer(gids_CURRENT[1], LENGTH_GIDS_ROW);
 }
 
 void loop()
@@ -254,6 +278,10 @@ void display_g()
 			g_print(); break;
 		case '2':
 			g_print(); break;
+		case '3':
+			g_print(); break;
+		case '4':
+			g_print(); break;
 		case 'm':
 		case 'M':
 			display_main_print(); break;
@@ -265,7 +293,12 @@ void display_g()
 
 void g_print()
 {
-	client.print(F("\n\rGIDA: \n\rGIDB: \n\r1: set GIDA\n\r2: set GIDB\n\rm: main display\n\r"));
+	client.print(F("\n\r1: Print GIDs: \n\r2: Print GIDB: \n\r3: Set GIDA\n\r4: Set GIDB\n\rm: main display\n\r"));
+}
+
+void printGIDA()
+{
+	
 }
 
 void default_print()
@@ -318,6 +351,169 @@ void clearTelnetSymbolBuffer()
 	}
 }
 
+void checkGIDs()
+{
+	if (validateGIDsFromEEPROM()) //gids eepron не установлены, устанавливаем из дефолта
+	{
+		Serial.println(F("GIDs set to DEFAULT"));
+		setGIDsToDEFAULT();
+		return;
+	}
+	//устанвливаем из eeprom
+	Serial.println(F("GIDs set from EEPROM"));
+	setGIDsFromEEPROM();
+}
+
+void setGIDsFromEEPROM()
+{
+	char c;
+	for (uint8_t row = 0; row < COUNT_GIDS_ROW; row++)
+	{
+		int adr_eeprom = (int)gids_EEPROM[row];
+		char *adr_buf = gids_CURRENT[row];
+		for (uint8_t i = 0; i < LENGTH_GIDS_ROW; i++)
+		{
+			c = eeread(adr_eeprom++);
+			*adr_buf++ = c;
+			if (!c) break;
+		}
+	}
+}
+
+void setGIDsToDEFAULT()
+{
+	for (uint8_t row = 0; row < COUNT_GIDS_ROW; row++)
+	{
+		int adr_eeprom = (int)gids_EEPROM[row];
+		char *adr_buf = gids_CURRENT[row];
+		strcpy(adr_buf, "no set");
+		saveString(adr_eeprom, adr_buf);
+	}
+}
+
+uint8_t validateGIDsFromEEPROM()
+{
+	Serial.println();
+	for (uint8_t row = 0; row < COUNT_GIDS_ROW; row++)
+	{
+		int adr_eeprom = (int)gids_EEPROM[row];
+		char *adr_buf = gids_CURRENT[row];
+		uint8_t count_c = 0;
+		char buf[LENGTH_GIDS_ROW];
+		for (uint8_t column = 0; column < LENGTH_GIDS_ROW; column++)
+		{
+			char c = eeread(adr_eeprom++);
+			if (!c) break; //если конец строки
+			if(c == '#' || (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+			{
+				*adr_buf++ = c;
+				++count_c;
+			}
+			else
+			{
+				return 1; //нето и несе
+			}
+		}
+		
+		if (!count_c || count_c == LENGTH_LIGHT_PARAM_ROW)
+		{
+			return 2; //пусто или нет конца строки
+		}
+	}	
+	return 0;
+}
+
+bool readGIDsFromInput(uint8_t row)
+{
+	client.flush();
+	char buf[LENGTH_GIDS_ROW] = { 0 };
+
+	char *adr_buf = gids_CURRENT[row];
+	int adr_eeprom = (int)gids_EEPROM[row];
+	char c;
+	uint8_t in_count = 0;
+	client.print(F("\n\rInput GID or Enter to leave the current value\n\r"));
+	printBufferPGMtoETH((int)&gids_table[row]);	
+	client.print(F(": Current value: "));
+	printBufferToETH(adr_buf, LENGTH_GIDS_ROW);
+	client.print("input: ");
+	while (true)
+	{
+		if (client.available() > 0) {
+			c = client.read();              // get the character
+			
+			if(c == '#' || (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
+			{
+				if (in_count < LENGTH_GIDS_ROW - 1)
+				{
+					client.print(c);
+					*(adr_buf + in_count) = c;
+					++in_count;
+				}
+				else
+				{
+					client.println(F(" maximum of 5 numbers."));
+					client.print("input: ");
+					for (uint8_t i = 0; i < in_count; i++)
+					{
+						client.print(light_param_TEMP[row][i]);
+					}
+				}
+			}
+			else if((c == '\n') || (c == '\r'))
+			{
+				client.flush();
+				*(adr_buf + in_count) = '\0';
+				break;
+			} 
+			else
+			{
+				client.print(c);
+				client.println(F(" Not a number."));
+				client.print("input: ");
+				for (uint8_t i = 0; i < in_count; i++)
+				{
+					client.print(light_param_TEMP[row][i]);
+				}
+			} 
+		}  
+	}
+	if (!in_count) //ввода не было, ввести текущее значение в буфер
+		{
+			char c;
+			arr_long[row] = light_param_CURRENT_D[row];
+			for (uint8_t i = 0; i < LENGTH_LIGHT_PARAM_ROW; i++)
+			{
+				c = eeread(adr_eeprom + i);
+				*(adr_buf + i) = c;
+				if (!c) break;
+			}	
+			client.print("\n\rnumber is: ");
+			client.println(arr_long[row]);
+		}
+	else
+	{
+		arr_long[row] = strtol(light_param_TEMP[row], 0, 0);
+		client.print("\n\rnumber is: ");
+		client.println(arr_long[row]);
+	}
+	client.println();
+	
+	if (arr_long[0] > arr_long[1] || arr_long[2] > arr_long[3])
+	{
+		client.println(F("Error MIN value > MAX value.\n\rValues are not valid, enter again"));
+		return false;
+	}
+	for (uint8_t row = 0; row < COUNT_LIGHT_PARAM_ROW; row++)
+	{
+		char *adr_buf = light_param_TEMP[row];
+		int adr_eeprom = (int)light_param_EEPROM[row];
+		light_param_CURRENT_D[row] = arr_long[row];
+		saveString(adr_eeprom, adr_buf);
+	}
+	return true;
+}
+
 void validateLightParamFromEEPROM() 
 {
 	Serial.println();
@@ -363,7 +559,7 @@ uint8_t setLightParamFromEEPROMtoCURRENT(uint8_t row)
 	{
 		return 1; 
 	}
-	
+	Serial.println(F("EEPROM-->CURRENT_D"));
 	light_param_CURRENT_D[row] = strtol(light_param_TEMP[row], 0, 0);
 	Serial.print(row + 1);
 	Serial.print(F(": eeprom: "));
@@ -379,7 +575,7 @@ void setLightParamFromDEFAULTtoEEPROMandCURRENT()
 	{
 		saveString((int)light_param_EEPROM[row], light_param_DEFAULT[row]);
 		light_param_CURRENT_D[row] = strtol(light_param_DEFAULT[row], 0, 0);
-		
+		Serial.println(F("DFAULT-->EEPROM-CURRENT_D"));
 		Serial.print(row + 1);
 		Serial.print(F(": default: "));
 		printBuffer((char *)light_param_DEFAULT[row], sizeof(light_param_DEFAULT[row]));
@@ -388,6 +584,7 @@ void setLightParamFromDEFAULTtoEEPROMandCURRENT()
 		Serial.print("      \tcur_digit: ");
 		Serial.println(light_param_CURRENT_D[row]);
 	}
+	Serial.println();
 }
 
 void printBufferEEPROM(const char *buf, uint8_t length)
@@ -415,6 +612,18 @@ void printBuffer(char* buf, uint8_t length)
 	}
 }
 
+void printBufferToETH(char* buf, uint8_t length)
+{
+	char c;
+	for (uint8_t i = 0; i < length; i++)
+	{
+		c = *buf++;
+		if (!c)
+			return;
+		client.print(c);
+	}
+}
+
 void printlight_param_TEMP_CURRENT_D_EEPROM()
 {
 	for (uint8_t row = 0; row < COUNT_LIGHT_PARAM_ROW; row++)
@@ -423,9 +632,9 @@ void printlight_param_TEMP_CURRENT_D_EEPROM()
 		Serial.print(F(": temp: "));
 		char *adr_buf = light_param_TEMP[row];
 		printBuffer(adr_buf, sizeof(light_param_TEMP[row]));
-		Serial.print("    \tcur_digit: ");
+		Serial.print("   \tcur_digit: ");
 		Serial.print(light_param_CURRENT_D[row]);
-		Serial.print(F("    \teeprom: "));
+		Serial.print(F("     \teeprom: "));
 		printBufferEEPROM(light_param_EEPROM[row], sizeof(light_param_EEPROM[row]));
 		Serial.println();
 	}
@@ -528,7 +737,8 @@ bool readLightSettingFromInput()
 				arr_long[row] = light_param_CURRENT_D[row];
 				for (uint8_t i = 0; i < LENGTH_LIGHT_PARAM_ROW; i++)
 				{
-					*(adr_buf + i) = eeread(adr_eeprom + i);
+					c = eeread(adr_eeprom + i);
+					*(adr_buf + i) = c;
 					if (!c) break;
 				}	
 				client.print("\n\rnumber is: ");
