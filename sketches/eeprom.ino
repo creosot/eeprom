@@ -1,20 +1,37 @@
 #include "avr/eeprom.h"
+#include <BH1750.h>
+#include <UIPEthernet.h>
+
+BH1750 lightMeter;
+EthernetServer server(23);
+EthernetClient client;
 
 void saveString(int addr, char *str);
 void eewrite(int addr, uint8_t value);
 uint8_t eeread(int addr);
 uint8_t setLightParamFromEEPROMtoCURRENT(uint8_t row);
-uint8_t checkStringLightParamFromINPUT(uint8_t row);
-void writeStringLightParamToEEPROM(uint8_t row);
 void validateLightParamFromEEPROM();
-void checkLightParamFromINPUT();
 void printBuffer(char* buf, uint8_t length);
 void printBufferEEPROM(const char *buf, uint8_t length);
 void printBufferPGM(int adr_ptr);
+void printBufferPGMtoETH(int adr_ptr);
 void printlight_param_TEMP_CURRENT_D_EEPROM();
 void setLightParamFromDEFAULTtoEEPROMandCURRENT();
-void setLightParamFromCURRENT();
 bool readLightSettingFromInput();
+uint8_t telnet_server();
+void display_main_print();
+void clearTelnetSymbolBuffer();
+void telnet_close_connection();
+void display_l();
+void l_print();
+void display_g();
+void g_print();
+void default_print();
+void printLux();
+void lightStream();
+void PrintLightParam();
+
+
 
 #define LENGTH_LIGHT_PARAM_ROW	6
 #define COUNT_LIGHT_PARAM_ROW	4
@@ -23,10 +40,10 @@ EEMEM const char dsa[LENGTH_LIGHT_PARAM_ROW] = { 0 };
 const char light_param_DEFAULT[COUNT_LIGHT_PARAM_ROW][LENGTH_LIGHT_PARAM_ROW] = { "20", "25000", "20", "80" };
 char light_param_TEMP[COUNT_LIGHT_PARAM_ROW][LENGTH_LIGHT_PARAM_ROW] = { 0 };
 long light_param_CURRENT_D[COUNT_LIGHT_PARAM_ROW] = { 0 };
-const char string_0[] PROGMEM = "MIN Light";     // "String 0" etc are strings to store - change to suit.
-const char string_1[] PROGMEM = "MAX LIGHT";
-const char string_2[] PROGMEM = "MIN Led";
-const char string_3[] PROGMEM = "MAX Led";
+const char string_0[] PROGMEM = "MIN Light value:  ";     // "String 0" etc are strings to store - change to suit.
+const char string_1[] PROGMEM = "MAX Light value:  ";
+const char string_2[] PROGMEM = "MIN Bright value: ";
+const char string_3[] PROGMEM = "MAX Bright value: ";
 const char * const string_table[COUNT_LIGHT_PARAM_ROW] PROGMEM =   	   // change "string_table" name to suit
 {   
 	string_0,
@@ -34,11 +51,65 @@ const char * const string_table[COUNT_LIGHT_PARAM_ROW] PROGMEM =   	   // change
 	string_2,
 	string_3
 };
+float lux = -2;
+uint8_t mac[6] = { 0x74, 0x69, 0x69, 0x2D, 0x30, 0x31 };
+uint8_t charsReceived = 0;
+unsigned long timeOfLastActivity;   //time in milliseconds of last activity
+unsigned long allowedConnectTime = 300000;   //five minutes
+uint8_t count_s = 0;
+#define textBuffSize 4
+char textBuff[textBuffSize];
 
 void setup()
 {
 	Serial.begin(9600);
 	Serial.println(F("Start"));
+//BH Init
+	Wire.begin();
+	delay(1000);
+	Serial.print(F("\n\rController Init\n\r"));
+	delay(1000);
+		
+	while (1) 
+	{
+		Serial.print(F("BH Init\n\r"));
+		lightMeter.begin();
+		delay(500);
+		lux = lightMeter.readLightLevel();
+		if (lux != -2)
+		{
+			Serial.println(F("BH1750 Ok"));
+			break;
+		}
+		delay(5000);
+	}
+//	//Ethernet Init
+	while (1) 
+	{
+		Serial.println(F("Ethernet Init"));
+		int ret = Ethernet.begin(mac);
+		if (ret != 0)
+		{
+			Serial.println(F("Ethernet Ok"));
+			break;
+		}
+		Serial.println(F("Not DHCP adress"));
+		Serial.print(F("localIP: "));
+		Serial.println(Ethernet.localIP());
+	}
+	Serial.print(F("localIP: "));
+	Serial.println(Ethernet.localIP());
+	Serial.print(F("subnetMask: "));
+	Serial.println(Ethernet.subnetMask());
+	Serial.print(F("gatewayIP: "));
+	Serial.println(Ethernet.gatewayIP());
+	Serial.print(F("dnsServerIP: "));
+	Serial.println(Ethernet.dnsServerIP());
+	server.begin();
+	Serial.print(F("\n\rtelnet server start on 23 port\n\r"));
+	
+	
+	
 //	saveString((int)light_param_EEPROM[1], (char *)"44");
 	Serial.println();
 	printBufferEEPROM(light_param_EEPROM[0], sizeof(light_param_EEPROM[0]));
@@ -48,8 +119,8 @@ void setup()
 	printBufferEEPROM(light_param_EEPROM[2], sizeof(light_param_EEPROM[2]));
 	Serial.println();
 	printBufferEEPROM(light_param_EEPROM[3], sizeof(light_param_EEPROM[3]));
-	//	Serial.println();
-//	validateLightParamFromEEPROM();
+	Serial.println();
+	validateLightParamFromEEPROM();
 //	readLightSettingFromInput();
 //	printlight_param_TEMP_CURRENT_D_EEPROM();
 }
@@ -57,8 +128,194 @@ void setup()
 void loop()
 {
 	
+	telnet_server();
 	
-	
+}
+
+uint8_t telnet_server()
+{
+	client = server.available();
+	if (client) 
+	{
+		Serial.println(F("client connected"));
+		bool flg_display_main_print = false;
+		client.flush();
+		timeOfLastActivity = millis();
+		while (client.connected())	
+		{
+			if (!flg_display_main_print)
+			{
+				display_main_print();
+				client.print(F(">>"));
+			}
+			flg_display_main_print = true;
+			
+			if (millis() - timeOfLastActivity > allowedConnectTime) {
+				client.print(F("\n\rTimeout disconnect.\n\r"));
+				telnet_close_connection();
+				return 2;
+			}
+			
+			if (client.available()) //Возвращает количество непрочитанных байтов, принятых клиентом от сервера
+				{
+					textBuff[charsReceived] = (char) client.read();
+				
+					if (textBuff[2] == 'q')
+					{
+						textBuff[0] = textBuff[3];
+						textBuff[1] = 0;
+						textBuff[2] = 0;
+						textBuff[3] = 0; 
+						charsReceived = 0;
+					}
+				
+					switch (textBuff[0])
+					{
+					case 'l':
+					case 'L':
+						display_l(); break;
+					case 'g':
+					case 'G':
+						display_g(); break;
+					case 'c':
+					case 'C':
+						telnet_close_connection(); return 1;
+					default:
+						default_print(); break;
+					}
+				}
+			if (textBuff[3] == 'l' || textBuff[3] == 'L')
+			{
+				lightStream(); 
+				delay(1000);
+			}
+		}
+	}
+	return 0;
+}
+
+void display_l()
+{
+	if (charsReceived == 0)
+	{
+		charsReceived = 1;
+		l_print(); 
+	}
+	else
+	{
+		switch (textBuff[1])
+		{
+		case '1':
+			printLux(); l_print(); break;
+		case '2':
+			l_print(); break;
+		case '3':
+			PrintLightParam();  l_print(); break;
+		case '4':
+			readLightSettingFromInput(); l_print(); break;
+		case '5':
+			textBuff[3] = textBuff[0]; textBuff[0] = 0; charsReceived = 2; break;	
+		case 'm':
+		case 'M':
+			display_main_print(); break;
+		default:
+			default_print(); break;
+		}
+	}
+}
+
+void l_print()
+{
+	client.print(F("\n\r1: Light sensor value\n\r2: Bright display\n\r3: MAX MIN parameters\n\r4: Set MAX MIN parameters\n\r5: stream sensor value\n\rm: main display\n\r"));
+}
+
+void PrintLightParam()
+{
+	client.print(F("\n\rCurrent map(function) value:\n\r"));
+	for (uint8_t row = 0; row < COUNT_LIGHT_PARAM_ROW; row++)
+	{
+		printBufferPGMtoETH((int)&string_table[row]);	
+		client.println(light_param_CURRENT_D[row]);
+	}
+}
+
+void display_g()
+{
+	if (charsReceived == 0)
+	{
+		charsReceived = 1;
+		g_print(); 
+	}
+	else
+	{
+		switch (textBuff[1])
+		{
+		case '1':
+			g_print(); break;
+		case '2':
+			g_print(); break;
+		case 'm':
+		case 'M':
+			display_main_print(); break;
+		default:
+			default_print(); break;
+		}
+	}
+}
+
+void g_print()
+{
+	client.print(F("\n\rGIDA: \n\rGIDB: \n\r1: set GIDA\n\r2: set GIDB\n\rm: main display\n\r"));
+}
+
+void default_print()
+{
+	if (textBuff[charsReceived] == '\n' || textBuff[charsReceived] == '\r')
+	{
+		client.print(F(">")); 
+	}
+}
+
+void printLux()
+{
+	lux = lightMeter.readLightLevel();
+	if (lux == -2)
+	{
+		client.print(F("\tLight sensor not answer\n\r"));
+	}
+	else
+	{
+		client.print(F("\tLight = "));
+		client.println(lux);
+	}
+}
+
+void lightStream()
+{
+	printLux();
+}
+
+void telnet_close_connection()
+{
+	client.println(F("\nBye.\n"));
+	delay(1000);
+	client.stop();
+	Serial.println(F("client stop"));
+}
+
+void display_main_print()
+{
+	clearTelnetSymbolBuffer();
+	client.print(F("\n\rSymbol and Enter\n\rl: LIGHTs setting\n\rg: GIDs setting\n\rc: Close terminal\n\r"));
+}
+
+void clearTelnetSymbolBuffer()
+{
+	charsReceived = 0;
+	for (uint8_t i = 0; i < textBuffSize; i++)
+	{
+		textBuff[i] = 0;	 
+	}
 }
 
 void validateLightParamFromEEPROM() 
@@ -111,7 +368,7 @@ uint8_t setLightParamFromEEPROMtoCURRENT(uint8_t row)
 	Serial.print(row + 1);
 	Serial.print(F(": eeprom: "));
 	printBufferEEPROM(light_param_EEPROM[row], sizeof(light_param_EEPROM[row]));
-	Serial.print("    \tcur_digit: ");
+	Serial.print("   \tcur_digit: ");
 	Serial.println(light_param_CURRENT_D[row]);
 	return 0;
 }
@@ -183,6 +440,15 @@ void printBufferPGM(int adr_ptr) {
 	}
 }
 
+void printBufferPGMtoETH(int adr_ptr) {
+	char c;
+	uint16_t ptr = pgm_read_word(adr_ptr);       // получаем адрес из таблицы ссылок
+	while((c = pgm_read_byte(ptr++)))
+	{
+		client.print(c);         
+	}
+}
+
 
 void saveString(int addr, char *str)
 {
@@ -202,6 +468,7 @@ uint8_t eeread(int addr)
 
 bool readLightSettingFromInput()
 {
+	client.flush();
 	long arr_long[COUNT_LIGHT_PARAM_ROW];
 	for (uint8_t row = 0; row < COUNT_LIGHT_PARAM_ROW; row++)
 	{
@@ -209,75 +476,76 @@ bool readLightSettingFromInput()
 		int adr_eeprom = (int)light_param_EEPROM[row];
 		char c;
 		uint8_t in_count = 0;
-		Serial.print(F("\n\rInput number or Enter to leave the current value\n\r"));
-		printBufferPGM((int)&string_table[row]);	
-		Serial.print(F(": Current value: "));
-		Serial.println(light_param_CURRENT_D[row]);
-		Serial.print("input: ");
+		client.print(F("\n\rInput number or Enter to leave the current value\n\r"));
+		printBufferPGMtoETH((int)&string_table[row]);	
+		client.print(F(": Current value: "));
+		client.println(light_param_CURRENT_D[row]);
+		client.print("input: ");
 		while (true)
 		{
-			if (Serial.available() > 0) {
-				c = Serial.read();           // get the character
+			if (client.available() > 0) {
+				c = client.read();             // get the character
 			
 				if((c >= '0') && (c <= '9'))
 				{
 					if (in_count < LENGTH_LIGHT_PARAM_ROW - 1)
 					{
-						Serial.print(c);
-						*(adr_buf + in_count) = c ;
+						client.print(c);
+						*(adr_buf + in_count) = c;
 						++in_count;
 					}
 					else
 					{
-						Serial.println(F(" maximum of 5 numbers."));
-						Serial.print("input: ");
+						client.println(F(" maximum of 5 numbers."));
+						client.print("input: ");
 						for (uint8_t i = 0; i < in_count; i++)
 						{
-							Serial.print(light_param_TEMP[row][i]);
+							client.print(light_param_TEMP[row][i]);
 						}
 					}
 				}
 				else if((c == '\n') || (c == '\r'))
 				{
+					client.flush();
 					*(adr_buf + in_count) = '\0';
 					break;
 				} 
 				else
 				{
-					Serial.print(c);
-					Serial.println(F(" Not a number."));
-					Serial.print("input: ");
+					client.print(c);
+					client.println(F(" Not a number."));
+					client.print("input: ");
 					for (uint8_t i = 0; i < in_count; i++)
 					{
-						Serial.print(light_param_TEMP[row][i]);
+						client.print(light_param_TEMP[row][i]);
 					}
 				} 
 			}  
 		}
 		if (!in_count) //ввода не было, ввести текущее значение в буфер
-		{
-			char c;
-			arr_long[row] = light_param_CURRENT_D[row];
-			for (uint8_t i = 0; i < LENGTH_LIGHT_PARAM_ROW; i++)
 			{
-				*(adr_buf + i) = eeread(adr_eeprom + i);
-				if (!c) break;
-			}	
-			Serial.print("\n\rnumber is: ");
-			Serial.println(arr_long[row]);
-		}
+				char c;
+				arr_long[row] = light_param_CURRENT_D[row];
+				for (uint8_t i = 0; i < LENGTH_LIGHT_PARAM_ROW; i++)
+				{
+					*(adr_buf + i) = eeread(adr_eeprom + i);
+					if (!c) break;
+				}	
+				client.print("\n\rnumber is: ");
+				client.println(arr_long[row]);
+			}
 		else
 		{
 			arr_long[row] = strtol(light_param_TEMP[row], 0, 0);
-			Serial.print("\n\rnumber is: ");
-			Serial.println(arr_long[row]);
+			client.print("\n\rnumber is: ");
+			client.println(arr_long[row]);
 		}
-		Serial.println();
+		client.println();
 	}
 	
 	if (arr_long[0] > arr_long[1] || arr_long[2] > arr_long[3])
 	{
-		Serial.println(F("Error MIN value > MAX value.\n\rValues are not valid, enter again"));
+		client.println(F("Error MIN value > MAX value.\n\rValues are not valid, enter again"));
 		return false;
 	}
 	for (uint8_t row = 0; row < COUNT_LIGHT_PARAM_ROW; row++)
@@ -289,3 +557,93 @@ bool readLightSettingFromInput()
 	}
 	return true;
 }
+
+//bool readLightSettingFromInput()
+//{
+//	long arr_long[COUNT_LIGHT_PARAM_ROW];
+//	for (uint8_t row = 0; row < COUNT_LIGHT_PARAM_ROW; row++)
+//	{
+//		char *adr_buf = light_param_TEMP[row];
+//		int adr_eeprom = (int)light_param_EEPROM[row];
+//		char c;
+//		uint8_t in_count = 0;
+//		Serial.print(F("\n\rInput number or Enter to leave the current value\n\r"));
+//		printBufferPGM((int)&string_table[row]);	
+//		Serial.print(F(": Current value: "));
+//		Serial.println(light_param_CURRENT_D[row]);
+//		Serial.print("input: ");
+//		while (true)
+//		{
+//			if (Serial.available() > 0) {
+//				c = Serial.read();           // get the character
+//			
+//				if((c >= '0') && (c <= '9'))
+//				{
+//					if (in_count < LENGTH_LIGHT_PARAM_ROW - 1)
+//					{
+//						Serial.print(c);
+//						*(adr_buf + in_count) = c ;
+//						++in_count;
+//					}
+//					else
+//					{
+//						Serial.println(F(" maximum of 5 numbers."));
+//						Serial.print("input: ");
+//						for (uint8_t i = 0; i < in_count; i++)
+//						{
+//							Serial.print(light_param_TEMP[row][i]);
+//						}
+//					}
+//				}
+//				else if((c == '\n') || (c == '\r'))
+//				{
+//					*(adr_buf + in_count) = '\0';
+//					break;
+//				} 
+//				else
+//				{
+//					Serial.print(c);
+//					Serial.println(F(" Not a number."));
+//					Serial.print("input: ");
+//					for (uint8_t i = 0; i < in_count; i++)
+//					{
+//						Serial.print(light_param_TEMP[row][i]);
+//					}
+//				} 
+//			}  
+//		}
+//		if (!in_count) //ввода не было, ввести текущее значение в буфер
+//		{
+//			char c;
+//			arr_long[row] = light_param_CURRENT_D[row];
+//			for (uint8_t i = 0; i < LENGTH_LIGHT_PARAM_ROW; i++)
+//			{
+//				*(adr_buf + i) = eeread(adr_eeprom + i);
+//				if (!c) break;
+//			}	
+//			Serial.print("\n\rnumber is: ");
+//			Serial.println(arr_long[row]);
+//		}
+//		else
+//		{
+//			arr_long[row] = strtol(light_param_TEMP[row], 0, 0);
+//			Serial.print("\n\rnumber is: ");
+//			Serial.println(arr_long[row]);
+//		}
+//		Serial.println();
+//	}
+//	
+//	if (arr_long[0] > arr_long[1] || arr_long[2] > arr_long[3])
+//	{
+//		Serial.println(F("Error MIN value > MAX value.\n\rValues are not valid, enter again"));
+//		return false;
+//	}
+//	for (uint8_t row = 0; row < COUNT_LIGHT_PARAM_ROW; row++)
+//	{
+//		char *adr_buf = light_param_TEMP[row];
+//		int adr_eeprom = (int)light_param_EEPROM[row];
+//		light_param_CURRENT_D[row] = arr_long[row];
+//		saveString(adr_eeprom, adr_buf);
+//	}
+//	return true;
+//}
