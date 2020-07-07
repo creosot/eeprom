@@ -5,6 +5,4 @@
 #define SYSPROGS_ARDUINO_EXPAND_GENERATED_PROTOTYPES \
 	void setup(); \
 	void loop(); \
-	void printGIDA(); \
-	bool readGIDsFromInput(uint8_t row); \
 
